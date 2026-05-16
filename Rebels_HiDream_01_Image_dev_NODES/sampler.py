@@ -1,7 +1,8 @@
 """
 Rebel HiDream-O1 Sampler.
-Supports T2I, image editing with up to 4 refs, seam smoothing,
-full KSampler-style sampler/scheduler selection.
+Wraps upstream models.pipeline.generate_image().
+Supports T2I, image editing with up to 4 refs,
+full KSampler-style sampler/scheduler dropdowns, seam smoothing.
 """
 import os
 import tempfile
@@ -9,17 +10,26 @@ import numpy as np
 import torch
 from PIL import Image
 
-# Pull the actual sampler/scheduler lists from ComfyUI
 try:
     import comfy.samplers
     SAMPLER_NAMES = list(comfy.samplers.KSampler.SAMPLERS)
-    SCHEDULER_NAMES = list(comfy.samplers.KSampler.SCHEDULERS)
+    SCHEDULER_NAMES = list(comfy.samplers.KSampler.SCHEDULERS) + ["flash"]
 except Exception:
     SAMPLER_NAMES = ["euler", "euler_ancestral", "heun", "dpmpp_2m", "dpmpp_2m_sde",
-                     "dpmpp_sde", "uni_pc", "uni_pc_bh2", "ddim", "lcm"]
+                     "dpmpp_sde", "uni_pc", "uni_pc_bh2", "ddim", "lcm", "deis"]
     SCHEDULER_NAMES = ["normal", "karras", "exponential", "sgm_uniform", "simple",
-                       "ddim_uniform", "beta"]
+                       "ddim_uniform", "beta", "flash"]
 
+STOCHASTIC_SAMPLERS = {
+    "euler_ancestral", "euler_ancestral_cfg_pp",
+    "dpmpp_2s_ancestral", "dpmpp_2s_ancestral_cfg_pp",
+    "dpmpp_sde", "dpmpp_sde_gpu",
+    "dpmpp_2m_sde", "dpmpp_2m_sde_gpu",
+    "dpmpp_3m_sde", "dpmpp_3m_sde_gpu",
+    "ddpm",
+}
+
+UNIPC_SAMPLERS = {"uni_pc", "uni_pc_bh2", "deis"}
 
 RESOLUTION_PRESETS = {
     "2048x2048 (1:1 square)":      (2048, 2048),
@@ -45,6 +55,17 @@ def _image_to_path(image_tensor, temp_dir, index):
     return path
 
 
+def _resolve_scheduler(sampler_name, scheduler_name):
+    from models.pipeline import DEFAULT_TIMESTEPS
+    if scheduler_name == "flash":
+        return "flash", DEFAULT_TIMESTEPS
+    if sampler_name in UNIPC_SAMPLERS:
+        return "default", None
+    if sampler_name in STOCHASTIC_SAMPLERS:
+        return "flash", None
+    return "flash", None
+
+
 class RebelHiDreamO1Sampler:
 
     @classmethod
@@ -62,10 +83,10 @@ class RebelHiDreamO1Sampler:
                                           "tooltip": "Only used when resolution is Custom."}),
                 "custom_height": ("INT", {"default": 1024, "min": 256, "max": 4096, "step": 64,
                                           "tooltip": "Only used when resolution is Custom."}),
-                "sampler": (SAMPLER_NAMES, {"default": "euler",
-                    "tooltip": "Dev default: euler_ancestral | Full default: uni_pc"}),
-                "scheduler": (SCHEDULER_NAMES, {"default": "normal",
-                    "tooltip": "Timestep/sigma spacing. normal, karras, simple are most common."}),
+                "sampler": (SAMPLER_NAMES, {"default": "euler_ancestral",
+                    "tooltip": "Dev: euler_ancestral | Full: uni_pc"}),
+                "scheduler": (SCHEDULER_NAMES, {"default": "flash",
+                    "tooltip": "Dev: flash | Full: normal"}),
                 "steps": ("INT",   {"default": 28,  "min": 1,   "max": 100,
                                     "tooltip": "Dev: 28 | Full: 50"}),
                 "cfg":   ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.1,
@@ -106,7 +127,9 @@ class RebelHiDreamO1Sampler:
         generate_image    = model["generate_image"]
         DEFAULT_TIMESTEPS = model["DEFAULT_TIMESTEPS"]
 
-        # --- Resolution ---
+        resolved_scheduler, timesteps_list = _resolve_scheduler(sampler, scheduler)
+        print(f"[Rebels_HiDream_O1] Sampler: {sampler} → pipeline scheduler: {resolved_scheduler}")
+
         res = RESOLUTION_PRESETS[resolution_preset]
         force_custom = res is None
         if force_custom:
@@ -115,7 +138,6 @@ class RebelHiDreamO1Sampler:
         else:
             width, height = res
 
-        # --- Reference images ---
         ref_paths = []
         temp_dir = None
         connected = [r for r in [ref_image_1, ref_image_2, ref_image_3, ref_image_4] if r is not None]
@@ -125,7 +147,6 @@ class RebelHiDreamO1Sampler:
                 ref_paths.append(_image_to_path(ref, temp_dir, i))
             print(f"[Rebels_HiDream_O1] {len(ref_paths)} reference image(s) loaded")
 
-        # --- Custom resolution patch ---
         patched_originals = {}
         if force_custom:
             try:
@@ -151,8 +172,8 @@ class RebelHiDreamO1Sampler:
                 num_inference_steps=steps,
                 guidance_scale=cfg,
                 shift=shift,
-                sampler_name=sampler,
-                scheduler_name=scheduler,
+                timesteps_list=timesteps_list,
+                scheduler_name=resolved_scheduler,
                 seed=seed,
                 noise_scale_start=noise_scale_start,
                 noise_scale_end=noise_scale_end,
