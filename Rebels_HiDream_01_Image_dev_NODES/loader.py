@@ -33,10 +33,13 @@ else:
     )
 
 
-_DIFFUSION_MODELS_DIR = os.path.join(folder_paths.models_dir, "diffusion_models")
+# Reuse ComfyUI's already-resolved diffusion_models paths so that any locations
+# declared in extra_model_paths.yaml (e.g. NVME drives) are honored, instead of
+# hardcoding only <models_dir>/diffusion_models.
+_DIFFUSION_MODELS_DIRS = folder_paths.get_folder_paths("diffusion_models")
 if "hidream_o1" not in folder_paths.folder_names_and_paths:
     folder_paths.folder_names_and_paths["hidream_o1"] = (
-        [_DIFFUSION_MODELS_DIR],
+        list(_DIFFUSION_MODELS_DIRS),
         {".gguf", ".safetensors"},
     )
 
@@ -91,7 +94,7 @@ class RebelHiDreamO1Loader:
     def load(self, gguf_name, config_path, device, offload, compute_dtype):
         gguf_path = folder_paths.get_full_path("hidream_o1", gguf_name)
         if gguf_path is None or not os.path.isfile(gguf_path):
-            raise FileNotFoundError(f"GGUF '{gguf_name}' not found in {_DIFFUSION_MODELS_DIR}")
+            raise FileNotFoundError(f"GGUF '{gguf_name}' not found in {_DIFFUSION_MODELS_DIRS}")
 
         torch_dtype = {
             "bfloat16": torch.bfloat16,
