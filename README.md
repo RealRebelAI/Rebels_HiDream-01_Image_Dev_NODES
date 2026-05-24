@@ -5,6 +5,8 @@
 
 # NOW SUPPORTS IMAGE DEV 2604 !!!
 
+# NOW WITH NEW AND IMPROVED LORA SUPPORT: features a lora injection INSIDE the loader node itself to remove any issues with memory stalling due to lora stack injector node for low vram. this will load the entire lora without OOMing or missing pairs during merge due to lack of memory.
+
 Now featuring full Sampler/Scheduler support, Multi-Reference Editing, and built-in Seam Smoothing to eliminate tiling artifacts.
 
 This repository provides high-performance custom ComfyUI nodes for running the HiDream-01-Image-Dev models (both BF16 and GGUF). As a VAE-less, Pixel-Level Unified Transformer, HiDream-O1 generates raw pixels token-by-token. These nodes are optimized for local hardware, utilizing upfront dequantization and aggressive system RAM offloading—perfect for 8GB VRAM cards like the RTX 3070 by leveraging your 16GB of system RAM.
