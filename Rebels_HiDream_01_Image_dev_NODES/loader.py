@@ -1,11 +1,10 @@
 """
 Rebel HiDream-01 Loaders.
 
-- RebelHiDreamO1Loader   → GGUF path
+- RebelHiDreamO1Loader   → GGUF path (with built-in LoRA support)
 - RebelHiDreamO1LoaderHF → bf16 single-file safetensors
 
 Both return a HIDREAM_O1_MODEL handle the sampler can drive.
-Both support optional LoRA merge BEFORE accelerate dispatch (all layers accessible).
 """
 import os
 import sys
@@ -60,21 +59,8 @@ def _add_special_tokens(tokenizer):
         setattr(tokenizer, attr, tok)
 
 
-def _get_lora_inputs():
-    """Shared LoRA input definitions for both loaders."""
-    try:
-        lora_files = folder_paths.get_filename_list("loras")
-    except Exception:
-        lora_files = []
-    none_or_lora = ["None"] + list(lora_files)
-    return {
-        "lora_name":     (none_or_lora, {"tooltip": "Optional LoRA applied BEFORE offload — all layers accessible."}),
-        "lora_strength": ("FLOAT", {"default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05}),
-    }
-
-
 def _apply_lora_if_set(model, lora_name, lora_strength):
-    """Apply a single LoRA to the model (must be called BEFORE dispatch_model)."""
+    """Apply a single LoRA to the model (call BEFORE dispatch_model)."""
     if lora_name in (None, "", "None") or abs(lora_strength) < 1e-8:
         return
     path = folder_paths.get_full_path("loras", lora_name)
@@ -90,12 +76,17 @@ def _apply_lora_if_set(model, lora_name, lora_strength):
 
 
 # ===========================================================================
-# GGUF loader
+# GGUF loader (with built-in LoRA — merge before dispatch, all layers accessible)
 # ===========================================================================
 class RebelHiDreamO1Loader:
     @classmethod
     def INPUT_TYPES(cls):
-        lora = _get_lora_inputs()
+        try:
+            lora_files = folder_paths.get_filename_list("loras")
+        except Exception:
+            lora_files = []
+        none_or_lora = ["None"] + list(lora_files)
+
         return {
             "required": {
                 "gguf_name": (folder_paths.get_filename_list("hidream_o1"),),
@@ -107,8 +98,10 @@ class RebelHiDreamO1Loader:
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "offload": (list(OFFLOAD_PRESETS.keys()), {"default": "aggressive"}),
                 "compute_dtype": (["bfloat16", "float16", "float32"], {"default": "bfloat16"}),
-                "lora_name":     lora["lora_name"],
-                "lora_strength": lora["lora_strength"],
+                "lora_name": (none_or_lora, {
+                    "tooltip": "LoRA applied before offload — all layers accessible. Full 257/257 merge.",
+                }),
+                "lora_strength": ("FLOAT", {"default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05}),
             }
         }
 
@@ -186,7 +179,8 @@ class RebelHiDreamO1Loader:
 
 
 # ===========================================================================
-# BF16 / single-file safetensors loader
+# BF16 / single-file safetensors loader (REVERTED — proven working version)
+# For LoRA with BF16, use the LoRA Stack Injector node after this loader.
 # ===========================================================================
 class RebelHiDreamO1LoaderHF:
     @classmethod
@@ -196,7 +190,6 @@ class RebelHiDreamO1LoaderHF:
                      if f.lower().endswith(".safetensors")]
         except Exception:
             ckpts = []
-        lora = _get_lora_inputs()
         return {
             "required": {
                 "safetensors_file": (ckpts if ckpts else ["<no .safetensors in checkpoints/>"],),
@@ -211,8 +204,6 @@ class RebelHiDreamO1LoaderHF:
                     "default": "hidream_offload",
                     "tooltip": "Disk offload folder for layers that don't fit in VRAM+RAM.",
                 }),
-                "lora_name":     lora["lora_name"],
-                "lora_strength": lora["lora_strength"],
             }
         }
 
@@ -221,8 +212,9 @@ class RebelHiDreamO1LoaderHF:
     FUNCTION = "load"
     CATEGORY = "Rebels/HiDream-01"
 
-    def load(self, safetensors_file, config_path, dtype, offload, offload_folder,
-             lora_name="None", lora_strength=1.0):
+    def load(self, safetensors_file, config_path, dtype, offload, offload_folder):
+        from accelerate import load_checkpoint_and_dispatch
+
         sft_path = folder_paths.get_full_path("checkpoints", safetensors_file)
         if sft_path is None or not os.path.isfile(sft_path):
             raise FileNotFoundError(
@@ -240,32 +232,24 @@ class RebelHiDreamO1LoaderHF:
         with init_empty_weights():
             model = Qwen3VLForConditionalGeneration(config)
 
-        # Load weights into CPU first (NOT dispatch yet — need all layers for LoRA)
-        print(f"[Rebels_HiDream_01] Loading bf16 safetensors: {sft_path}")
-        state_dict = load_safetensors(sft_path)
-        for k in state_dict:
-            state_dict[k] = state_dict[k].to(torch_dtype)
-        model.load_state_dict(state_dict, strict=False, assign=True)
-        del state_dict
-
-        # --- LoRA merge BEFORE dispatch (all layers on CPU, fully accessible) ---
-        _apply_lora_if_set(model, lora_name, lora_strength)
-
-        # --- Now dispatch to GPU/CPU/disk per offload budget ---
         os.makedirs(offload_folder, exist_ok=True)
         max_memory = {
             0: f"{preset['cuda_gb']:.1f}GiB",
             "cpu": f"{preset['cpu_gb']:.1f}GiB",
         }
 
+        print(f"[Rebels_HiDream_01] Loading bf16 safetensors: {sft_path}")
         print(f"[Rebels_HiDream_01] Memory budget: {max_memory}, disk offload: {offload_folder}")
 
-        device_map = infer_auto_device_map(
-            model, max_memory=max_memory, dtype=torch_dtype,
+        model = load_checkpoint_and_dispatch(
+            model,
+            checkpoint=sft_path,
+            device_map="auto",
+            max_memory=max_memory,
+            offload_folder=offload_folder,
             no_split_module_classes=["Qwen3VLDecoderLayer"],
+            dtype=torch_dtype,
         )
-        model = dispatch_model(model, device_map=device_map,
-                               offload_dir=offload_folder)
         model.eval()
 
         processor = AutoProcessor.from_pretrained(config_path, trust_remote_code=True)
