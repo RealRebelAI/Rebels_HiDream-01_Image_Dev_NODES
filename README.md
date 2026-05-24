@@ -17,6 +17,8 @@ This repository provides high-performance custom ComfyUI nodes for running the H
 
 - Integrated LoRA Stack: Manage up to 4 LoRAs with fingerprint-based no-op detection.
 
+- Integrated LoRA inside Loader Node: save compute by preloading lora and merging BEFORE diffusion.
+
 - Advanced Seam Smoothing: Built-in "Patch Model Smoothing" logic to fix bad tiling and textures.
 
 - Expanded Sampler Support: Full flexibility with native ComfyUI samplers and schedulers.
