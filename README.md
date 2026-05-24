@@ -5,7 +5,7 @@
 
 # NOW SUPPORTS IMAGE DEV 2604 !!!
 
-# NOW WITH NEW AND IMPROVED LORA SUPPORT: features a lora injection INSIDE the loader node itself to remove any issues with memory stalling due to lora stack injector node for low vram. this will load the entire lora without OOMing or missing pairs during merge due to lack of memory.
+# NOW WITH NEW AND IMPROVED LORA SUPPORT: features a lora injection INSIDE the loader node itself to remove any issues with memory stalling due to lora stack injector node for low vram. this will load the entire lora without OOMing or missing pairs during merge due to lack of memory. REGULAR LORA STACK INJECTOR NODE STILL WORKS.
 
 Now featuring full Sampler/Scheduler support, Multi-Reference Editing, and built-in Seam Smoothing to eliminate tiling artifacts.
 
