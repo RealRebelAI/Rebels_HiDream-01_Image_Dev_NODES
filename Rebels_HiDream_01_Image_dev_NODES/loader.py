@@ -32,10 +32,10 @@ else:
         f"  {os.path.join(_NODE_DIR, 'models')}"
     )
 
-_DIFFUSION_MODELS_DIR = os.path.join(folder_paths.models_dir, "diffusion_models")
+# Use all resolved diffusion_models paths (main install + extra_model_paths.yaml)
 if "hidream_o1" not in folder_paths.folder_names_and_paths:
     folder_paths.folder_names_and_paths["hidream_o1"] = (
-        [_DIFFUSION_MODELS_DIR],
+        folder_paths.get_folder_paths("diffusion_models"),
         {".gguf", ".safetensors"},
     )
 
@@ -114,7 +114,10 @@ class RebelHiDreamO1Loader:
              lora_name="None", lora_strength=1.0):
         gguf_path = folder_paths.get_full_path("hidream_o1", gguf_name)
         if gguf_path is None or not os.path.isfile(gguf_path):
-            raise FileNotFoundError(f"GGUF '{gguf_name}' not found in {_DIFFUSION_MODELS_DIR}")
+            raise FileNotFoundError(
+                f"GGUF '{gguf_name}' not found in any diffusion_models path: "
+                f"{folder_paths.get_folder_paths('diffusion_models')}"
+            )
 
         torch_dtype = {
             "bfloat16": torch.bfloat16,
@@ -179,7 +182,7 @@ class RebelHiDreamO1Loader:
 
 
 # ===========================================================================
-# BF16 / single-file safetensors loader (REVERTED — proven working version)
+# BF16 / single-file safetensors loader (proven working version)
 # For LoRA with BF16, use the LoRA Stack Injector node after this loader.
 # ===========================================================================
 class RebelHiDreamO1LoaderHF:
